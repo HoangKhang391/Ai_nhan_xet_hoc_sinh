@@ -5,6 +5,7 @@ import io
 import re
 import os
 import random
+from datetime import datetime
 from openpyxl.styles import Alignment
 from supabase import create_client, Client # Thư viện kết nối database đám mây
 
@@ -62,6 +63,8 @@ st.markdown("""
     
     /* Custom css nhỏ riêng cho nút kích tài khoản trong Sidebar để giao diện cân đối hơn */
     .kick-btn button { height: 35px !important; font-size: 14px !important; padding: 0px !important; border-radius: 8px !important; }
+    .log-container { background-color: #111827; color: #10B981; padding: 15px; border-radius: 12px; font-family: 'Courier New', Courier, monospace; font-size: 13px; max-height: 250px; overflow-y: auto; box-shadow: inset 0 2px 4px rgba(0,0,0,0.6); }
+    .admin-badge { background-color: #FEF3C7; color: #D97706; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: bold; border: 1px solid #FCD34D; display: inline-block; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -69,6 +72,16 @@ st.markdown("""
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
 if "user_email" not in st.session_state: st.session_state["user_email"] = ""
 if "is_admin" not in st.session_state: st.session_state["is_admin"] = False
+if "system_logs" not in st.session_state: st.session_state["system_logs"] = []
+
+# --- HÀM GHI LỊCH SỬ THAO TÁC (LOGS) ---
+def ghi_log_he_thong(user, hanh_dong):
+    thoi_gian = datetime.now().strftime("%H:%M:%S")
+    log_msg = f"[{thoi_gian}] 👤 {user} -> {hanh_dong}"
+    # Giới hạn tối đa lưu 50 dòng logs gần nhất cho nhẹ bộ nhớ
+    st.session_state["system_logs"].insert(0, log_msg)
+    if len(st.session_state["system_logs"]) > 50:
+        st.session_state["system_logs"].pop()
 
 # --- HÀM XỬ LÝ DATABASE ONLINE ---
 def kiem_tra_dang_nhap_online(email, password):
@@ -99,7 +112,7 @@ def gui_yeu_cau_duyet_online(email, password):
 # --- GIAO DIỆN MÀN HÌNH ĐĂNG NHẬP / ĐĂNG KÝ ---
 if not st.session_state["logged_in"]:
     st.markdown('<div class="login-box">', unsafe_allow_html=True)
-    st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>🔐AI NHẬN XÉT HỌC SINH</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>🔐AI NHẬN XÉT HOC SINH</h2>", unsafe_allow_html=True)
     
     tab1, tab2 = st.tabs(["🔑 Đăng nhập", "📝 Đăng ký cấp quyền"])
     
@@ -112,6 +125,7 @@ if not st.session_state["logged_in"]:
                 st.session_state["logged_in"] = True
                 st.session_state["user_email"] = u_email
                 st.session_state["is_admin"] = la_admin
+                ghi_log_he_thong(u_email, "Đăng nhập vào hệ thống thành công.")
                 st.success("Đăng nhập thành công!")
                 st.rerun()
             else:
@@ -131,11 +145,12 @@ if not st.session_state["logged_in"]:
                 if "Chưa cấu hình" in msg or "Lỗi" in msg:
                     st.error(msg)
                 else:
+                    ghi_log_he_thong(r_email, "Gửi một yêu cầu đăng ký tài khoản mới.")
                     st.success(msg)
                 
     st.markdown('</div>', unsafe_allow_html=True)
 
-# --- GIAO DIỆN CHÍNH (ĐÃ ĐĂNG NHẬP THÀNH CÔNG) ---
+# --- GIAO DIỆN CHÍNH (ĐA ĐĂNG NHẬP THÀNH CÔNG) ---
 else:
     st.markdown('<div class="main-header notranslate"><h1>🎓AI NHẬN XÉT HỌC SINH</h1><p>Phiên bản thử nghiệm version T1.0</p></div>', unsafe_allow_html=True)
 
@@ -152,6 +167,7 @@ else:
     with st.sidebar:
         st.markdown(f"👤 Tài khoản: **{st.session_state['user_email']}**")
         if st.button("🚪 Đăng xuất", key="btn_logout"):
+            ghi_log_he_thong(st.session_state['user_email'], "Đã đăng xuất khỏi hệ thống.")
             st.session_state["logged_in"] = False
             st.rerun()
             
@@ -179,33 +195,38 @@ else:
                                 col_d1, col_d2 = st.columns(2)
                                 if col_d1.button("Duyệt ✅", key=f"ok_{user['id']}"):
                                     supabase.table("users").update({"status": "approved"}).eq("id", user['id']).execute()
+                                    ghi_log_he_thong(st.session_state['user_email'], f"Đã duyệt tài khoản thành viên: {user['email']}")
                                     st.toast(f"Đã duyệt tài khoản {user['email']}")
                                     st.rerun()
                                 if col_d2.button("Xóa ❌", key=f"del_{user['id']}"):
                                     supabase.table("users").delete().eq("id", user['id']).execute()
+                                    ghi_log_he_thong(st.session_state['user_email'], f"Từ chối và xóa yêu cầu của: {user['email']}")
                                     st.toast(f"Đã xóa yêu cầu của {user['email']}")
                                     st.rerun()
                                     
-                    # ---- PHẦN 2: TÀI KHOẢN ĐÃ DUYỆT (TÍNH NĂNG MỚI BỔ SUNG) ----
+                    # ---- PHẦN 2: TÀI KHOẢN ĐÃ DUYỆT (ĐÃ KHÓA CHỐNG KÍCH ADMIN) ----
                     st.write("")
                     st.markdown("#### 📋 Danh sách đã duyệt (Có thể kích)")
                     if len(users_approved) == 0:
                         st.caption("Chưa có tài khoản nào được duyệt hệ thống.")
                     else:
                         for user in users_approved:
-                            # Chia giao diện dòng: Email bên trái (cột rộng), nút bên phải (cột hẹp)
-                            col_mail, col_kick = st.columns([3, 1.5])
+                            col_mail, col_kick = st.columns([2.8, 1.7])
                             with col_mail:
                                 st.text(user['email'])
                             with col_kick:
-                                # Bọc class css nhỏ gọn để nút "Kích" không chiếm diện tích quá lớn
-                                st.markdown('<div class="kick-btn">', unsafe_allow_html=True)
-                                if st.button("Kích 🚪", key=f"kick_{user['id']}", type="secondary"):
-                                    # Thực hiện xóa tài khoản này khỏi DB Supabase
-                                    supabase.table("users").delete().eq("id", user['id']).execute()
-                                    st.toast(f"💥 Đã kích thành công: {user['email']}", icon="ℹ️")
-                                    st.rerun()
-                                st.markdown('</div>', unsafe_allow_html=True)
+                                # KIỂM TRA CHỐNG KÍCH NHẦM ADMIN: Nếu email chứa chữ "admin" hoặc trùng với tài khoản admin cứng
+                                email_kiem_tra = str(user['email']).strip().lower()
+                                if "admin" in email_kiem_tra or email_kiem_tra == "hasty_spider_admin":
+                                    st.markdown('<span class="admin-badge">🔒 Admin</span>', unsafe_allow_html=True)
+                                else:
+                                    st.markdown('<div class="kick-btn">', unsafe_allow_html=True)
+                                    if st.button("Kích 🚪", key=f"kick_{user['id']}", type="secondary"):
+                                        supabase.table("users").delete().eq("id", user['id']).execute()
+                                        ghi_log_he_thong(st.session_state['user_email'], f"💥 Đã thực hiện kích tài khoản: {user['email']}")
+                                        st.toast(f"💥 Đã kích thành công: {user['email']}", icon="ℹ️")
+                                        st.rerun()
+                                    st.markdown('</div>', unsafe_allow_html=True)
                 except Exception as e:
                     st.error(f"Lỗi tải danh sách quản lý: {str(e)}")
 
@@ -216,6 +237,15 @@ else:
             else: st.error(f"❌ {mon} (Thiếu file {info['file']})")
         st.divider()
         uploaded_bank_override = st.file_uploader("Cập nhật file mẫu riêng:", type=["xlsx"])
+
+    # --- KHU VỰC THỂ HIỆN LỊCH SỬ THAO TÁC THEO TIME (LOGS) TRÊN SCREEN CHÍNH ---
+    st.markdown("### 🖥️ Lịch sử hoạt động của hệ thống (Đồng bộ thời gian thực)")
+    if len(st.session_state["system_logs"]) == 0:
+        st.markdown('<div class="log-container">Chưa có thao tác nào được thực hiện...</div>', unsafe_allow_html=True)
+    else:
+        logs_html = "<br>".join(st.session_state["system_logs"])
+        st.markdown(f'<div class="log-container">{logs_html}</div>', unsafe_allow_html=True)
+    st.write("")
 
     st.markdown("### 📤 Bước 1: Tải lên file danh sách lớp học")
     uploaded_file = st.file_uploader("", type=["xlsx", "xlsm"])
@@ -298,17 +328,16 @@ else:
             if cols[i].button(ten_mon): mon_duoc_chon = ten_mon
 
         if mon_duoc_chon:
+            ghi_log_he_thong(st.session_state['user_email'], f"Bắt đầu kích hoạt AI chạy nhận xét cho môn: {mon_duoc_chon}")
             info = DANH_SACH_MON[mon_duoc_chon]
             if info["sheet"] not in xl.sheet_names:
                 st.error(f"Trong file lớp học không có Sheet tên: '{info['sheet']}'")
             elif not os.path.exists(info["file"]) and not uploaded_bank_override:
                 st.error(f"Thiếu file ngân hàng câu mẫu: {info['file']}")
             else:
-                # Đọc dữ liệu thô từ Excel - Giữ nguyên 100% dòng, kể cả dòng trống
                 df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=info["sheet"], dtype=str)
-                df = df.fillna("") # Đổi toàn bộ giá trị rỗng/NaN thành chuỗi trống để không bị crash
+                df = df.fillna("") 
                 
-                # --- KHU VỰC DÒ TÌM CỘT THÔNG MINH ---
                 col_ten_key = None
                 col_muc_key = None
                 
@@ -319,11 +348,9 @@ else:
                     if "mức" in c_clean or "muc" in c_clean or "đánh giá" in c_clean or "danh gia" in c_clean:
                         col_muc_key = c
                 
-                # Thiết lập phương án dự phòng nếu không tự tìm thấy cột phù hợp
                 if not col_ten_key: col_ten_key = 'Họ và tên' if 'Họ và tên' in df.columns else df.columns[1]
                 if not col_muc_key: col_muc_key = 'Mức đạt được' if 'Mức đạt được' in df.columns else ('Mức' if 'Mức' in df.columns else df.columns[2])
 
-                # Tải ngân hàng câu nhận xét mẫu
                 df_bank = pd.read_excel(uploaded_bank_override if uploaded_bank_override else info["file"], dtype=str)
                 
                 kho_mau = {"T": [], "H": [], "C": []}
@@ -335,18 +362,15 @@ else:
                         elif "H" in m: kho_mau["H"].append(c)
                         else: kho_mau["C"].append(c)
                 
-                # Khởi tạo cột nhận xét mới hoàn toàn trống sạch sẽ
                 df['Nội dung nhận xét'] = ""
                 
                 progress_bar = st.progress(0)
                 tat_ca_cau_da_tao = []
                 
-                # Vòng lặp quét chuẩn xác từng dòng theo tệp gốc
                 for idx, row in df.iterrows():
                     ten = str(row.get(col_ten_key, '')).strip()
                     muc = str(row.get(col_muc_key, '')).strip().upper()
                     
-                    # Bỏ qua không xử lý nếu dòng đó trống không có tên học sinh (nhưng vẫn giữ lại dòng trống trong file)
                     if not ten or ten == "0" or len(ten) < 2:
                         df.at[idx, 'Nội dung nhận xét'] = ""
                         continue
@@ -361,7 +385,6 @@ else:
                     
                     final_cmt = ""
                     
-                    # LỚP PHÒNG THỦ 1: AI Paraphrase sinh câu ngẫu nhiên không trùng lặp
                     for _ in range(6):
                         cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
                         raw = goi_ai_paraphrase(cau_goc_ngau_nhien, tat_ca_cau_da_tao)
@@ -371,7 +394,6 @@ else:
                             final_cmt = raw
                             break
                             
-                    # LỚP PHÒNG THỦ 2: Tạo từ đồng nghĩa bằng code cục bộ nếu AI lỗi hoặc trùng lắp
                     if not final_cmt or len(final_cmt.split()) < 3: 
                         for _ in range(4):
                             cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
@@ -380,27 +402,25 @@ else:
                                 final_cmt = test_code
                                 break
                         
-                    # LỚP PHÒNG THỦ 3: ÉP BUỘC ĐIỀN DỮ LIỆU - PHÒNG THỦ TUYỆT ĐỐI CHỐNG TRỐNG Ô
                     if not final_cmt or len(final_cmt.split()) < 3:
                         final_cmt = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(random.choice(danh_sach_phu_hop)), ten)
                     if not final_cmt or len(final_cmt.split()) < 3:
                         final_cmt = lam_sach_nhan_xet(random.choice(danh_sach_phu_hop), ten)
                     
-                    # Phương án dự phòng cuối cùng nếu kho mẫu trống rỗng hoặc bị lỗi đọc file
                     if not final_cmt or len(final_cmt.split()) < 3:
                         if muc_key == "T": final_cmt = "Em hoàn thành tốt nội dung môn học, có ý thức tự giác cao."
                         elif muc_key == "H": final_cmt = "Em hoàn thành đầy đủ nội dung môn học và các bài tập được giao."
                         else: final_cmt = "Em cần cố gắng nhiều hơn và chú ý nghe giảng trong giờ học."
                     
                     tat_ca_cau_da_tao.append(final_cmt)
-                    
-                    # Sử dụng .at thay vì .loc để ghi chuẩn xác dữ liệu theo vị trí dòng idx gốc
                     df.at[idx, 'Nội dung nhận xét'] = final_cmt
                     
                     percent = int((idx + 1) / len(df) * 100)
                     progress_bar.progress((idx + 1) / len(df), text=f"⏳ Môn {mon_duoc_chon}: {percent}% | {ten}")
 
-                # Định dạng file đầu ra Excel
+                # Ghi nhận log hoàn tất môn học
+                ghi_log_he_thong(st.session_state['user_email'], f"🎉 Hoàn thành xử lý dữ liệu và tạo file cho môn {mon_duoc_chon}!")
+
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df.to_excel(writer, sheet_name=info["sheet"], index=False)
