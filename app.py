@@ -181,3 +181,185 @@ else:
         st.markdown("### ⚙️ Trạng thái câu mẫu")
         for mon, info in DANH_SACH_MON.items():
             if os.path.exists(info["file"]): st.success(f"✅ {mon}")
+            else: st.error(f"❌ {mon} (Thiếu file {info['file']})")
+        st.divider()
+        uploaded_bank_override = st.file_uploader("Cập nhật file mẫu riêng:", type=["xlsx"])
+
+    st.markdown("### 📤 Bước 1: Tải lên file danh sách lớp học")
+    uploaded_file = st.file_uploader("", type=["xlsx", "xlsm"])
+
+    def tinh_do_trung_lap(cau1, cau2):
+        words1 = set(cau1.lower().split())
+        words2 = set(cau2.lower().split())
+        if not words1 or not words2: return 0.0
+        return len(words1.intersection(words2)) / max(len(words1), len(words2))
+
+    def goi_ai_paraphrase(cau_goc, lich_su_gan_nhat):
+        try:
+            system_instr = (
+                "Bạn là giáo viên tiểu học Việt Nam.\n"
+                "Nhiệm vụ: Viết lại câu nhận xét được cho bằng từ đồng nghĩa hoặc đảo vế khéo léo.\n"
+                "YÊU CẦU:\n"
+                "- CHỈ trả về duy nhất 1 câu bắt đầu bằng chữ 'Em'.\n"
+                "- TUYỆT ĐỐI KHÔNG thêm lời dẫn giải, không giải thích, không viết thêm ký tự khác."
+            )
+            cam_trung = " ; ".join(lich_su_gan_nhat[-5:]) if lich_su_gan_nhat else "Không có"
+            prompt = f"Hãy viết lại câu này một cách khác biệt:\n'{cau_goc}'\nTránh trùng lặp với các câu này: {cam_trung}"
+            
+            resp = requests.post("http://localhost:11434/api/chat", json={
+                "model": "qwen2.5:1.5b",
+                "messages": [{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}],
+                "stream": False, "options": {"temperature": 0.85, "top_p": 0.9, "presence_penalty": 1.2}
+            }, timeout=5)
+            return resp.json().get("message", {}).get("content", "").strip()
+        except: 
+            return ""
+
+    def code_tu_doi_tu_dong_nghia(cau):
+        tu_dien = [
+            ("trôi chảy", ["lưu loát", "rành mạch", "rất suôn sẻ", "tốt và trôi chảy"]),
+            ("mạch lạc", ["gãy gọn", "rõ ràng cụ thể", "chặt chẽ", "khoa học"]),
+            ("sáng tạo", ["độc đáo", "giàu ý tưởng", "đầy mới mẻ", "nhạy bén"]),
+            ("chính xác", ["đúng yêu cầu", "chuẩn xác", "rất chính xác", "đúng đắn"]),
+            ("tích cực", ["hăng hái", "chủ động", "tự giác tham gia", "năng nổ"]),
+            ("hoàn thành tốt", ["đạt kết quả cao", "đáng khen ngợi", "có sự tiến bộ vượt bậc", "nắm rất vững kiến thức"]),
+            ("hoàn thành", ["đạt yêu cầu môn học", "có nỗ lực hoàn thành tốt", "đạt chuẩn kiến thức"]),
+            ("có ý thức học tập", ["chăm chỉ học tập", "chú ý nghe giảng", "có tinh thần tự học cao", "rất cố gắng"])
+        ]
+        random.shuffle(tu_dien)
+        for goc, thay in tu_dien:
+            if goc in cau.lower() and random.random() > 0.2:
+                cau = re.sub(rf"(?i){goc}", random.choice(thay), cau, count=1)
+        
+        if "," in cau and random.random() > 0.5:
+            parts = cau.split(",", 1)
+            p1 = parts[0].strip().replace("Em ", "")
+            p2 = parts[1].strip()
+            if p2:
+                p2 = p2[0].upper() + p2[1:]
+                cau = f"Em {p2}, {p1.lower()}"
+        return cau
+
+    def lam_sach_nhan_xet(text, ten_hs):
+        if not text or len(text.split()) < 3: return ""
+        tu_cam = ["cảm ơn", "bạn đã", "câu hỏi", "tôi là", "trợ lý", "chúc bạn", "diễn đạt", "câu dịch", "dưới đây là", "câu gốc"]
+        for tk in tu_cam:
+            if tk in text.lower(): return ""
+        text = re.sub(r'(?i).*nhận xét.*?:|.*mức.*?:|.*diễn đạt lại.*?:|.*câu diễn đạt khác.*?:|.*câu viết lại.*?:', '', text)
+        text = text.replace("**", "").replace("*", "").replace('"', '').replace("'", "")
+        if ten_hs: text = re.sub(rf"(?i){ten_hs}", "", text)
+        text = text.strip(' ".,-–\n\r\t')
+        if not text.lower().startswith("em"): text = "Em " + text
+        text = text[0].upper() + text[1:]
+        return text + "." if not text.endswith(".") else text
+
+    if uploaded_file:
+        file_bytes = uploaded_file.read()
+        xl = pd.ExcelFile(io.BytesIO(file_bytes), engine='openpyxl')
+        st.info(f"📁 File lớp học có các Sheet: {', '.join(xl.sheet_names)}")
+
+        st.markdown("### 🖱️ Bước 2: Chọn môn học cần AI nhận xét")
+        cols = st.columns(len(DANH_SACH_MON))
+        
+        mon_duoc_chon = None
+        for i, (ten_mon, info) in enumerate(DANH_SACH_MON.items()):
+            if cols[i].button(ten_mon): mon_duoc_chon = ten_mon
+
+        if mon_duoc_chon:
+            info = DANH_SACH_MON[mon_duoc_chon]
+            if info["sheet"] not in xl.sheet_names:
+                st.error(f"Trong file lớp học không có Sheet tên: '{info['sheet']}'")
+            elif not os.path.exists(info["file"]) and not uploaded_bank_override:
+                st.error(f"Thiếu file ngân hàng câu mẫu: {info['file']}")
+            else:
+                # ĐỌC VÀ LÀM SẠCH DỮ LIỆU ĐẦU VÀO ĐỂ TRÁNH TRỐNG LỎM CHỎM
+                raw_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=info["sheet"], dtype=str)
+                # Loại bỏ các dòng trống hoàn toàn trong file gốc nếu có
+                df = raw_df.dropna(subset=['Họ và tên']).copy() if 'Họ và tên' in raw_df.columns else raw_df.dropna(how='all').copy()
+                df = df.reset_index(drop=True)
+                
+                df_bank = pd.read_excel(uploaded_bank_override if uploaded_bank_override else info["file"], dtype=str)
+                
+                kho_mau = {"T": [], "H": [], "C": []}
+                for _, r in df_bank.iterrows():
+                    m = str(r.get('Mức đạt được', r.get('Mức', 'T'))).strip().upper()
+                    c = str(r.get('Nội dung nhận xét', '')).strip()
+                    if len(c.split()) > 2:
+                        if "T" in m: kho_mau["T"].append(c)
+                        elif "H" in m: kho_mau["H"].append(c)
+                        else: kho_mau["C"].append(c)
+                
+                # Tạo sẵn cột nếu chưa có và làm sạch giá trị cũ
+                df['Nội dung nhận xét'] = ""
+                
+                progress_bar = st.progress(0)
+                tat_ca_cau_da_tao = []
+                
+                for idx, row in df.iterrows():
+                    ten = str(row.get('Họ và tên', '')).strip()
+                    muc = str(row.get('Mức đạt được', row.get('Mức', 'T'))).strip().upper()
+                    
+                    muc_key = "T"
+                    if "H" in muc: muc_key = "H"
+                    elif "C" in muc: muc_key = "C"
+                    
+                    danh_sach_phu_hop = kho_mau.get(muc_key, kho_mau["T"])
+                    if not danh_sach_phu_hop: danh_sach_phu_hop = ["Em hoàn thành tốt nội dung môn học."]
+                    
+                    final_cmt = ""
+                    
+                    # LỚP PHÒNG THỦ 1: AI Paraphrase
+                    for _ in range(6):
+                        cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
+                        raw = goi_ai_paraphrase(cau_goc_ngau_nhien, tat_ca_cau_da_tao)
+                        raw = lam_sach_nhan_xet(raw, ten)
+                        
+                        if raw and not any(tinh_do_trung_lap(raw, h) > 0.65 for h in tat_ca_cau_da_tao[-10:]):
+                            final_cmt = raw
+                            break
+                            
+                    # LỚP PHÒNG THỦ 2: Code trộn từ đồng nghĩa tự động
+                    if not final_cmt: 
+                        for _ in range(4):
+                            cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
+                            test_code = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(cau_goc_ngau_nhien), ten)
+                            if test_code and not any(tinh_do_trung_lap(test_code, h) > 0.65 for h in tat_ca_cau_da_tao[-10:]):
+                                final_cmt = test_code
+                                break
+                        
+                    # LỚP PHÒNG THỦ 3: CHỐT CHẶN CUỐI CÙNG - CAM KẾT TUYỆT ĐỐI KHÔNG ĐỂ TRỐNG Ô
+                    if not final_cmt:
+                        final_cmt = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(random.choice(danh_sach_phu_hop)), ten)
+                    if not final_cmt or len(final_cmt.split()) < 3:
+                        final_cmt = lam_sach_nhan_xet(random.choice(danh_sach_phu_hop), ten)
+                    
+                    tat_ca_cau_da_tao.append(final_cmt)
+                    # Ghi trực tiếp vào ô dữ liệu hiện tại
+                    df.loc[idx, 'Nội dung nhận xét'] = final_cmt
+                    
+                    percent = int((idx + 1) / len(df) * 100)
+                    progress_bar.progress((idx + 1) / len(df), text=f"⏳ Môn {mon_duoc_chon}: {percent}% | {ten}")
+
+                # Điền chuỗi rỗng xử lý triệt để dữ liệu lỗi trước khi xuất
+                df = df.fillna("")
+
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df.to_excel(writer, sheet_name=info["sheet"], index=False)
+                    worksheet = writer.sheets[info["sheet"]]
+                    
+                    col_idx = None
+                    for cell in worksheet[1]:
+                        if cell.value == 'Nội dung nhận xét':
+                            col_idx = cell.column
+                            break
+                    if col_idx:
+                        col_letter = worksheet.cell(row=1, column=col_idx).column_letter
+                        worksheet.column_dimensions[col_letter].width = 55
+                        for row_cells in worksheet.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
+                            for cell in row_cells:
+                                cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='left')
+
+                output.seek(0)
+                st.success(f"🎉 Đã xong môn {mon_duoc_chon}! File đã được lấp đầy dữ liệu chuẩn chỉnh.")
+                st.download_button(f"📥 TẢI FILE KẾT QUẢ {mon_duoc_chon.upper()}", output, f"Nhan_Xet_{mon_duoc_chon.replace(' ', '_')}.xlsx")
