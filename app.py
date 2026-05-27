@@ -69,52 +69,29 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- KHỞI TẠO BIẾN TRẠNG THÁI ---
-if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
-if "user_email" not in st.session_state: st.session_state["user_email"] = ""
-if "is_admin" not in st.session_state: st.session_state["is_admin"] = False
-if "system_logs" not in st.session_state: st.session_state["system_logs"] = []
+# --- ⚙️ ĐỒNG BỘ TRẠNG THÁI ĐĂNG NHẬP QUA URL (CHỐNG MẤT KHI F5) ---
+# Đọc tham số từ thanh địa chỉ trình duyệt (Nếu có sẵn do phiên trước chưa logout)
+url_email = st.query_params.get("u", "")
+url_admin = st.query_params.get("a", "0")
 
-# --- 🛠️ CƠ CHẾ ĐỒNG BỘ TRẠNG THÁI ĐĂNG NHẬP VỚI TRÌNH DUYỆT (CHỐNG MẤT KHI F5) ---
-# Đọc dữ liệu từ localStorage gửi ngược vào st.query_params của Streamlit
-st.components.v1.html("""
-    <script>
-    const email = localStorage.getItem("user_email");
-    const loggedIn = localStorage.getItem("logged_in");
-    const isAdmin = localStorage.getItem("is_admin");
-    
-    const url = new URL(window.location.href);
-    let changed = false;
-    
-    if (loggedIn === "true" && url.searchParams.get("sync_login") !== "true") {
-        url.searchParams.set("sync_login", "true");
-        url.searchParams.set("email", email || "");
-        url.searchParams.set("admin", isAdmin || "false");
-        changed = true;
-    } else if (!loggedIn && url.searchParams.get("sync_login") === "true") {
-        url.searchParams.delete("sync_login");
-        url.searchParams.delete("email");
-        url.searchParams.delete("admin");
-        changed = true;
-    }
-    
-    if (changed) {
-        window.location.href = url.href;
-    }
-    </script>
-""", height=0, width=0)
+# Khởi tạo session_state dựa trên dữ liệu lấy từ thanh URL địa chỉ
+if "logged_in" not in st.session_state:
+    if url_email:
+        st.session_state["logged_in"] = True
+        st.session_state["user_email"] = url_email
+        st.session_state["is_admin"] = (url_admin == "1")
+    else:
+        st.session_state["logged_in"] = False
+        st.session_state["user_email"] = ""
+        st.session_state["is_admin"] = False
 
-# Khôi phục trạng thái từ URL query params sau khi ép đồng bộ
-if st.query_params.get("sync_login") == "true" and not st.session_state["logged_in"]:
-    st.session_state["logged_in"] = True
-    st.session_state["user_email"] = st.query_params.get("email", "")
-    st.session_state["is_admin"] = st.query_params.get("admin") == "true"
+if "system_logs" not in st.session_state: 
+    st.session_state["system_logs"] = []
 
 # --- HÀM GHI LỊCH SỬ THAO TÁC (LOGS) ---
 def ghi_log_he_thong(user, hanh_dong):
     thoi_gian = datetime.now().strftime("%H:%M:%S")
     log_msg = f"[{thoi_gian}] 👤 {user} -> {hanh_dong}"
-    # Giới hạn tối đa lưu 50 dòng logs gần nhất cho nhẹ bộ nhớ
     st.session_state["system_logs"].insert(0, log_msg)
     if len(st.session_state["system_logs"]) > 50:
         st.session_state["system_logs"].pop()
@@ -158,20 +135,16 @@ if not st.session_state["logged_in"]:
         if st.button("XÁC NHẬN ĐĂNG NHẬP", key="btn_login", use_container_width=True):
             hop_le, la_admin = kiem_tra_dang_nhap_online(u_email, u_pass)
             if hop_le:
+                # Ghi nhận trạng thái vào Session
                 st.session_state["logged_in"] = True
                 st.session_state["user_email"] = u_email
                 st.session_state["is_admin"] = la_admin
                 ghi_log_he_thong(u_email, "Đăng nhập vào hệ thống thành công.")
                 
-                # Lưu thông tin vào localStorage của trình duyệt bằng JS
-                st.components.v1.html(f"""
-                    <script>
-                    localStorage.setItem("logged_in", "true");
-                    localStorage.setItem("user_email", "{u_email}");
-                    localStorage.setItem("is_admin", "{str(la_admin).lower()}");
-                    window.parent.location.reload();
-                    </script>
-                """, height=0, width=0)
+                # NÉO THẲNG VÀO URL TRÌNH DUYỆT ĐỂ CHỐNG MẤT KHI F5
+                st.query_params["u"] = u_email
+                st.query_params["a"] = "1" if la_admin else "0"
+                
                 st.success("Đăng nhập thành công!")
                 st.rerun()
             else:
@@ -215,21 +188,13 @@ else:
         if st.button("🚪 Đăng xuất", key="btn_logout"):
             ghi_log_he_thong(st.session_state['user_email'], "Đã đăng xuất khỏi hệ thống.")
             
-            # Xoá trạng thái trong session_state hiện tại và xoá cả query params trên URL
+            # Xoá trạng thái trong session_state
             st.session_state["logged_in"] = False
             st.session_state["is_admin"] = False
             st.session_state.clear()
-            st.query_params.clear()
             
-            # Xóa hẳn thông tin lưu trên trình duyệt bằng đoạn mã script này
-            st.components.v1.html("""
-                <script>
-                localStorage.removeItem("logged_in");
-                localStorage.removeItem("user_email");
-                localStorage.removeItem("is_admin");
-                window.parent.location.href = window.parent.location.origin + window.parent.location.pathname;
-                </script>
-            """, height=0, width=0)
+            # XOÁ SẠCH THAM SỐ TRÊN THANH URL ĐỊA CHỈ ĐỂ LOGOUT HOÀN TOÀN
+            st.query_params.clear()
             st.rerun()
             
         if st.session_state["is_admin"]:
@@ -298,8 +263,6 @@ else:
     # --- KHU VỰC THỂ HIỆN LỊCH SỬ THAO TÁC (CHỈ HIỂN THỊ CHO ADMIN VÀ CẬP NHẬT LIÊN TỤC) ---
     if st.session_state["is_admin"]:
         st.markdown("### 🖥️ Lịch sử hoạt động của hệ thống (Đồng bộ thời gian thực từ Admin)")
-        
-        # Tạo trình tự động làm mới ứng dụng mỗi 5000ms (5 giây) để Admin hứng log từ user khác ngay lập tức
         st_autorefresh(interval=5000, limit=1200, key="admin_log_refresh")
         
         if len(st.session_state["system_logs"]) == 0:
