@@ -8,6 +8,7 @@ import random
 from datetime import datetime
 from openpyxl.styles import Alignment
 from supabase import create_client, Client # Thư viện kết nối database đám mây
+from streamlit_autorefresh import st_autorefresh # THÊM THƯ VIỆN TỰ ĐỘNG CẬP NHẬT LOG
 
 # 1. Cấu hình giao diện Dashboard
 st.set_page_config(page_title="AI Nhận Xét Học Sinh", page_icon="🎓", layout="wide")
@@ -150,7 +151,7 @@ if not st.session_state["logged_in"]:
                 
     st.markdown('</div>', unsafe_allow_html=True)
 
-# --- GIAO DIỆN CHÍNH (ĐA ĐĂNG NHẬP THÀNH CÔNG) ---
+# --- GIAO DIỆN CHÍNH (ĐÃ ĐĂNG NHẬP THÀNH CÔNG) ---
 else:
     st.markdown('<div class="main-header notranslate"><h1>🎓AI NHẬN XÉT HỌC SINH</h1><p>Phiên bản thử nghiệm version T1.0</p></div>', unsafe_allow_html=True)
 
@@ -169,6 +170,8 @@ else:
         if st.button("🚪 Đăng xuất", key="btn_logout"):
             ghi_log_he_thong(st.session_state['user_email'], "Đã đăng xuất khỏi hệ thống.")
             st.session_state["logged_in"] = False
+            st.session_state["is_admin"] = False  # Reset trạng thái admin khi logout
+            st.session_state.clear()             # Xoá sạch bộ nhớ phiên cũ
             st.rerun()
             
         if st.session_state["is_admin"]:
@@ -178,14 +181,12 @@ else:
                 st.warning("Chưa cấu hình khóa kết nối mạng trực tuyến.")
             else:
                 try:
-                    # Lấy toàn bộ danh sách users để phân loại trực tiếp trên code nhằm tối ưu truy vấn
                     res_all = supabase.table("users").select("*").execute()
                     all_users = res_all.data
                     
                     users_pending = [u for u in all_users if u.get("status") == "pending"]
                     users_approved = [u for u in all_users if u.get("status") == "approved"]
                     
-                    # ---- PHẦN 1: TÀI KHOẢN CHỜ DUYỆT ----
                     st.markdown("#### ⏳ Danh sách chờ duyệt")
                     if len(users_pending) == 0:
                         st.caption("🎉 Không có ai đang chờ duyệt!")
@@ -204,7 +205,6 @@ else:
                                     st.toast(f"Đã xóa yêu cầu của {user['email']}")
                                     st.rerun()
                                     
-                    # ---- PHẦN 2: TÀI KHOẢN ĐÃ DUYỆT (ĐÃ KHÓA CHỐNG KÍCH ADMIN) ----
                     st.write("")
                     st.markdown("#### 📋 Danh sách đã duyệt (Có thể kích)")
                     if len(users_approved) == 0:
@@ -215,7 +215,6 @@ else:
                             with col_mail:
                                 st.text(user['email'])
                             with col_kick:
-                                # KIỂM TRA CHỐNG KÍCH NHẦM ADMIN: Nếu email chứa chữ "admin" hoặc trùng với tài khoản admin cứng
                                 email_kiem_tra = str(user['email']).strip().lower()
                                 if "admin" in email_kiem_tra or email_kiem_tra == "hasty_spider_admin":
                                     st.markdown('<span class="admin-badge">🔒 Admin</span>', unsafe_allow_html=True)
@@ -231,22 +230,28 @@ else:
                     st.error(f"Lỗi tải danh sách quản lý: {str(e)}")
 
         st.divider()
-        st.markdown("### ⚙️ Trạng thái câu mẫu")
+        st.markdown("### 📋 Trạng thái câu mẫu")
         for mon, info in DANH_SACH_MON.items():
             if os.path.exists(info["file"]): st.success(f"✅ {mon}")
             else: st.error(f"❌ {mon} (Thiếu file {info['file']})")
         st.divider()
         uploaded_bank_override = st.file_uploader("Cập nhật file mẫu riêng:", type=["xlsx"])
 
-    # --- KHU VỰC THỂ HIỆN LỊCH SỬ THAO TÁC THEO TIME (LOGS) TRÊN SCREEN CHÍNH ---
-    st.markdown("### 🖥️ Lịch sử hoạt động của hệ thống (Đồng bộ thời gian thực)")
-    if len(st.session_state["system_logs"]) == 0:
-        st.markdown('<div class="log-container">Chưa có thao tác nào được thực hiện...</div>', unsafe_allow_html=True)
-    else:
-        logs_html = "<br>".join(st.session_state["system_logs"])
-        st.markdown(f'<div class="log-container">{logs_html}</div>', unsafe_allow_html=True)
-    st.write("")
+    # --- ĐÃ SỬA: KHU VỰC THỂ HIỆN LỊCH SỬ THAO TÁC (CHỈ HIỂN THỊ CHO ADMIN VÀ CẬP NHẬT LIÊN TỤC) ---
+    if st.session_state["is_admin"]:
+        st.markdown("### 🖥️ Lịch sử hoạt động của hệ thống (Đồng bộ thời gian thực từ Admin)")
+        
+        # Tạo trình tự động làm mới ứng dụng mỗi 5000ms (5 giây) để Admin hứng log từ user khác ngay lập tức
+        st_autorefresh(interval=5000, limit=1200, key="admin_log_refresh")
+        
+        if len(st.session_state["system_logs"]) == 0:
+            st.markdown('<div class="log-container">Chưa có thao tác nào được thực hiện...</div>', unsafe_allow_html=True)
+        else:
+            logs_html = "<br>".join(st.session_state["system_logs"])
+            st.markdown(f'<div class="log-container">{logs_html}</div>', unsafe_allow_html=True)
+        st.write("")
 
+    # --- KHU VỰC CHỨC NĂNG CHÍNH CỦA USER THƯỜNG VÀ ADMIN ---
     st.markdown("### 📤 Bước 1: Tải lên file danh sách lớp học")
     uploaded_file = st.file_uploader("", type=["xlsx", "xlsm"])
 
@@ -328,7 +333,7 @@ else:
             if cols[i].button(ten_mon): mon_duoc_chon = ten_mon
 
         if mon_duoc_chon:
-            ghi_log_he_thong(st.session_state['user_email'], f"Bắt đầu kích hoạt AI chạy nhận xét cho môn: {mon_duoc_chon}")
+            ghi_log_he_thong(st.session_state['user_email'], f"Kích hoạt chạy nhận xét môn: {mon_duoc_chon}")
             info = DANH_SACH_MON[mon_duoc_chon]
             if info["sheet"] not in xl.sheet_names:
                 st.error(f"Trong file lớp học không có Sheet tên: '{info['sheet']}'")
@@ -418,7 +423,6 @@ else:
                     percent = int((idx + 1) / len(df) * 100)
                     progress_bar.progress((idx + 1) / len(df), text=f"⏳ Môn {mon_duoc_chon}: {percent}% | {ten}")
 
-                # Ghi nhận log hoàn tất môn học
                 ghi_log_he_thong(st.session_state['user_email'], f"🎉 Hoàn thành xử lý dữ liệu và tạo file cho môn {mon_duoc_chon}!")
 
                 output = io.BytesIO()
