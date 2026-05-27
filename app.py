@@ -272,12 +272,26 @@ else:
             elif not os.path.exists(info["file"]) and not uploaded_bank_override:
                 st.error(f"Thiếu file ngân hàng câu mẫu: {info['file']}")
             else:
-                # ĐỌC VÀ LÀM SẠCH DỮ LIỆU ĐẦU VÀO ĐỂ TRÁNH TRỐNG LỎM CHỎM
-                raw_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=info["sheet"], dtype=str)
-                # Loại bỏ các dòng trống hoàn toàn trong file gốc nếu có
-                df = raw_df.dropna(subset=['Họ và tên']).copy() if 'Họ và tên' in raw_df.columns else raw_df.dropna(how='all').copy()
-                df = df.reset_index(drop=True)
+                # Đọc dữ liệu thô từ Excel - Giữ nguyên 100% dòng, kể cả dòng trống
+                df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=info["sheet"], dtype=str)
+                df = df.fillna("") # Đổi toàn bộ giá trị rỗng/NaN thành chuỗi trống để không bị crash
                 
+                # --- KHU VỰC DÒ TÌM CỘT THÔNG MINH ---
+                col_ten_key = None
+                col_muc_key = None
+                
+                for c in df.columns:
+                    c_clean = str(c).strip().lower()
+                    if "họ và tên" in c_clean or "ho va ten" in c_clean or c_clean == "tên" or c_clean == "ten":
+                        col_ten_key = c
+                    if "mức" in c_clean or "muc" in c_clean or "đánh giá" in c_clean or "danh gia" in c_clean:
+                        col_muc_key = c
+                
+                # Thiết lập phương án dự phòng nếu không tự tìm thấy cột phù hợp
+                if not col_ten_key: col_ten_key = 'Họ và tên' if 'Họ và tên' in df.columns else df.columns[1]
+                if not col_muc_key: col_muc_key = 'Mức đạt được' if 'Mức đạt được' in df.columns else ('Mức' if 'Mức' in df.columns else df.columns[2])
+
+                # Tải ngân hàng câu nhận xét mẫu
                 df_bank = pd.read_excel(uploaded_bank_override if uploaded_bank_override else info["file"], dtype=str)
                 
                 kho_mau = {"T": [], "H": [], "C": []}
@@ -289,60 +303,72 @@ else:
                         elif "H" in m: kho_mau["H"].append(c)
                         else: kho_mau["C"].append(c)
                 
-                # Tạo sẵn cột nếu chưa có và làm sạch giá trị cũ
+                # Khởi tạo cột nhận xét mới hoàn toàn trống sạch sẽ
                 df['Nội dung nhận xét'] = ""
                 
                 progress_bar = st.progress(0)
                 tat_ca_cau_da_tao = []
                 
+                # Vòng lặp quét chuẩn xác từng dòng theo tệp gốc
                 for idx, row in df.iterrows():
-                    ten = str(row.get('Họ và tên', '')).strip()
-                    muc = str(row.get('Mức đạt được', row.get('Mức', 'T'))).strip().upper()
+                    ten = str(row.get(col_ten_key, '')).strip()
+                    muc = str(row.get(col_muc_key, '')).strip().upper()
                     
+                    # Bỏ qua không xử lý nếu dòng đó trống không có tên học sinh (nhưng vẫn giữ lại dòng trống trong file)
+                    if not ten or ten == "0" or len(ten) < 2:
+                        df.at[idx, 'Nội dung nhận xét'] = ""
+                        continue
+                        
                     muc_key = "T"
                     if "H" in muc: muc_key = "H"
                     elif "C" in muc: muc_key = "C"
                     
                     danh_sach_phu_hop = kho_mau.get(muc_key, kho_mau["T"])
-                    if not danh_sach_phu_hop: danh_sach_phu_hop = ["Em hoàn thành tốt nội dung môn học."]
+                    if not danh_sach_phu_hop: 
+                        danh_sach_phu_hop = kho_mau["T"] if kho_mau["T"] else ["Em hoàn thành tốt nội dung môn học."]
                     
                     final_cmt = ""
                     
-                    # LỚP PHÒNG THỦ 1: AI Paraphrase
+                    # LỚP PHÒNG THỦ 1: AI Paraphrase sinh câu ngẫu nhiên không trùng lặp
                     for _ in range(6):
                         cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
                         raw = goi_ai_paraphrase(cau_goc_ngau_nhien, tat_ca_cau_da_tao)
                         raw = lam_sach_nhan_xet(raw, ten)
                         
-                        if raw and not any(tinh_do_trung_lap(raw, h) > 0.65 for h in tat_ca_cau_da_tao[-10:]):
+                        if raw and len(raw.split()) > 3 and not any(tinh_do_trung_lap(raw, h) > 0.65 for h in tat_ca_cau_da_tao[-10:]):
                             final_cmt = raw
                             break
                             
-                    # LỚP PHÒNG THỦ 2: Code trộn từ đồng nghĩa tự động
-                    if not final_cmt: 
+                    # LỚP PHÒNG THỦ 2: Tạo từ đồng nghĩa bằng code cục bộ nếu AI lỗi hoặc trùng lắp
+                    if not final_cmt or len(final_cmt.split()) < 3: 
                         for _ in range(4):
                             cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
                             test_code = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(cau_goc_ngau_nhien), ten)
-                            if test_code and not any(tinh_do_trung_lap(test_code, h) > 0.65 for h in tat_ca_cau_da_tao[-10:]):
+                            if test_code and len(test_code.split()) > 3 and not any(tinh_do_trung_lap(test_code, h) > 0.65 for h in tat_ca_cau_da_tao[-10:]):
                                 final_cmt = test_code
                                 break
                         
-                    # LỚP PHÒNG THỦ 3: CHỐT CHẶN CUỐI CÙNG - CAM KẾT TUYỆT ĐỐI KHÔNG ĐỂ TRỐNG Ô
-                    if not final_cmt:
+                    # LỚP PHÒNG THỦ 3: ÉP BUỘC ĐIỀN DỮ LIỆU - PHÒNG THỦ TUYỆT ĐỐI CHỐNG TRỐNG Ô
+                    if not final_cmt or len(final_cmt.split()) < 3:
                         final_cmt = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(random.choice(danh_sach_phu_hop)), ten)
                     if not final_cmt or len(final_cmt.split()) < 3:
                         final_cmt = lam_sach_nhan_xet(random.choice(danh_sach_phu_hop), ten)
                     
+                    # Phương án dự phòng cuối cùng nếu kho mẫu trống rỗng hoặc bị lỗi đọc file
+                    if not final_cmt or len(final_cmt.split()) < 3:
+                        if muc_key == "T": final_cmt = "Em hoàn thành tốt nội dung môn học, có ý thức tự giác cao."
+                        elif muc_key == "H": final_cmt = "Em hoàn thành đầy đủ nội dung môn học và các bài tập được giao."
+                        else: final_cmt = "Em cần cố gắng nhiều hơn và chú ý nghe giảng trong giờ học."
+                    
                     tat_ca_cau_da_tao.append(final_cmt)
-                    # Ghi trực tiếp vào ô dữ liệu hiện tại
-                    df.loc[idx, 'Nội dung nhận xét'] = final_cmt
+                    
+                    # Sử dụng .at thay vì .loc để ghi chuẩn xác dữ liệu theo vị trí dòng idx gốc
+                    df.at[idx, 'Nội dung nhận xét'] = final_cmt
                     
                     percent = int((idx + 1) / len(df) * 100)
                     progress_bar.progress((idx + 1) / len(df), text=f"⏳ Môn {mon_duoc_chon}: {percent}% | {ten}")
 
-                # Điền chuỗi rỗng xử lý triệt để dữ liệu lỗi trước khi xuất
-                df = df.fillna("")
-
+                # Định dạng file đầu ra Excel
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df.to_excel(writer, sheet_name=info["sheet"], index=False)
@@ -361,5 +387,5 @@ else:
                                 cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='left')
 
                 output.seek(0)
-                st.success(f"🎉 Đã xong môn {mon_duoc_chon}! File đã được lấp đầy dữ liệu chuẩn chỉnh.")
+                st.success(f"🎉 Đã xong môn {mon_duoc_chon}! Cột nhận xét đã được điền đều, thẳng hàng tăm tắp.")
                 st.download_button(f"📥 TẢI FILE KẾT QUẢ {mon_duoc_chon.upper()}", output, f"Nhan_Xet_{mon_duoc_chon.replace(' ', '_')}.xlsx")
