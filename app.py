@@ -194,46 +194,63 @@ else:
         if not words1 or not words2: return 0.0
         return len(words1.intersection(words2)) / max(len(words1), len(words2))
 
-    def goi_ai_paraphrase(cau_goc, lich_su):
+    def goi_ai_paraphrase(cau_goc, lich_su_gan_nhat):
         try:
             system_instr = (
-                "Bạn là giáo viên dạy tiểu học ở Việt Nam.\n"
-                "Nhiệm vụ: Viết lại câu nhận xét gốc bằng cách thay từ đồng nghĩa hoặc đổi vế câu.\n"
-                "YÊU CẦU NGHIÊM NGẶT:\n"
-                "- CHỈ TRẢ VỀ DUY NHẤT câu nhận xét mới, bắt đầu bằng chữ 'Em'.\n"
-                "- TUYỆT ĐỐI KHÔNG thêm lời dẫn dắt, không giải thích, không viết 'Đây là cách diễn đạt', không nhắc lại câu lệnh.\n"
-                "- Không sinh bất kỳ chữ nào ngoài câu nhận xét chính thức."
+                "Bạn là giáo viên chủ nhiệm bậc tiểu học tại Việt Nam.\n"
+                "Nhiệm vụ: Hãy diễn đạt lại câu nhận xét được cung cấp bằng các từ đồng nghĩa khác hoàn toàn hoặc đảo lộn vị trí các vế câu một cách khéo léo, tự nhiên.\n"
+                "YÊU CẦU BẮT BUỘC:\n"
+                "- CHỈ ghi duy nhất 1 câu nhận xét kết quả bắt đầu bằng chữ 'Em'.\n"
+                "- TUYỆT ĐỐI KHÔNG thêm kính thưa, không diễn giải, không ghi 'Đây là câu viết lại:' hay bất kỳ ký tự dư thừa nào."
             )
-            prompt = f"Viết lại câu này thành một câu duy nhất: '{cau_goc}'. Không trùng với: {str(lich_su[-5:])}"
+            # Ép mô hình tránh xa các câu vừa tạo trong danh sách gần nhất
+            cam_trung = " ; ".join(lich_su_gan_nhat[-7:]) if lich_su_gan_nhat else "Không có"
+            prompt = f"Hãy viết lại câu gốc sau đây sao cho ý nghĩa không đổi nhưng từ ngữ cấu trúc khác đi hoàn toàn:\nCâu gốc: '{cau_goc}'\nTránh viết giống các câu này: {cam_trung}"
+            
+            # Tăng hẳn temperature lên 0.85 và top_p lên 0.9 để phá bỏ sự rập khuôn của mô hình nhỏ
             resp = requests.post("http://localhost:11434/api/chat", json={
                 "model": "qwen2.5:1.5b",
                 "messages": [{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}],
-                "stream": False, "options": {"temperature": 0.4, "top_p": 0.7}
+                "stream": False, "options": {"temperature": 0.85, "top_p": 0.9, "presence_penalty": 1.2}
             }, timeout=7)
             return resp.json().get("message", {}).get("content", "").strip()
-        except: return ""
+        except: 
+            return ""
 
     def code_tu_doi_tu_dong_nghia(cau):
+        # Mở rộng ngân hàng từ để xáo trộn thủ công mạnh mẽ hơn khi AI bị nghẽn
         tu_dien = [
-            ("trôi chảy", ["lưu loát", "rành mạch", "suôn sẻ"]),
-            ("mạch lạc", ["gãy gọn", "rõ ràng", "chặt chẽ"]),
-            ("sáng tạo", ["độc đáo", "giàu ý tưởng"]),
-            ("chính xác", ["đúng yêu cầu", "chuẩn xác"]),
-            ("tích cực", ["hăng hái", "chủ động", "tự giác"]),
-            ("tốt", ["xuất sắc", "đạt kết quả cao", "đáng khen", "tiến bộ"])
+            ("trôi chảy", ["lưu loát", "rành mạch", "rất suôn sẻ", "tốt và trôi chảy"]),
+            ("mạch lạc", ["gãy gọn", "rõ ràng cụ thể", "chặt chẽ", "khoa học"]),
+            ("sáng tạo", ["độc đáo", "giàu ý tưởng", "đầy mới mẻ", "nhạy bén"]),
+            ("chính xác", ["đúng yêu cầu", "chuẩn xác", "rất chính xác", "đúng đắn"]),
+            ("tích cực", ["hăng hái", "chủ động", "tự giác tham gia", "năng nổ"]),
+            ("hoàn thành tốt", ["đạt kết quả cao", "đáng khen ngợi", "có sự tiến bộ vượt bậc", "nắm rất vững kiến thức"]),
+            ("hoàn thành", ["đạt yêu cầu môn học", "có nỗ lực hoàn thành tốt", "đạt chuẩn kiến thức"]),
+            ("có ý thức học tập", ["chăm chỉ học tập", "chú ý nghe giảng", "có tinh thần tự học cao", "rất cố gắng"])
         ]
         random.shuffle(tu_dien)
         for goc, thay in tu_dien:
-            if goc in cau.lower() and random.random() > 0.3:
+            if goc in cau.lower() and random.random() > 0.2:
                 cau = re.sub(rf"(?i){goc}", random.choice(thay), cau, count=1)
+        
+        # Đảo vế câu ngẫu nhiên nếu có dấu phẩy để tạo cấu trúc mới
+        if "," in cau and random.random() > 0.5:
+            parts = cau.split(",", 1)
+            p1 = parts[0].strip().replace("Em ", "")
+            p2 = parts[1].strip()
+            # Viết hoa lại chữ cái đầu của vế sau đưa lên trước
+            if p2:
+                p2 = p2[0].upper() + p2[1:]
+                cau = f"Em {p2}, {p1.lower()}"
         return cau
 
     def lam_sach_nhan_xet(text, ten_hs):
-        if not text or len(text.split()) < 4: return ""
-        tu_cam = ["cảm ơn", "bạn đã", "câu hỏi", "tôi là", "trợ lý", "chúc bạn", "diễn đạt", "câu dịch", "dưới đây là"]
+        if not text or len(text.split()) < 3: return ""
+        tu_cam = ["cảm ơn", "bạn đã", "câu hỏi", "tôi là", "trợ lý", "chúc bạn", "diễn đạt", "câu dịch", "dưới đây là", "câu gốc"]
         for tk in tu_cam:
             if tk in text.lower(): return ""
-        text = re.sub(r'(?i).*nhận xét.*?:|.*mức.*?:|.*diễn đạt lại.*?:|.*câu diễn đạt khác.*?:', '', text)
+        text = re.sub(r'(?i).*nhận xét.*?:|.*mức.*?:|.*diễn đạt lại.*?:|.*câu diễn đạt khác.*?:|.*câu viết lại.*?:', '', text)
         text = text.replace("**", "").replace("*", "").replace('"', '').replace("'", "")
         if ten_hs: text = re.sub(rf"(?i){ten_hs}", "", text)
         text = text.strip(' ".,-–\n\r\t')
@@ -279,7 +296,6 @@ else:
                     ten = str(row.get('Họ và tên', '')).strip()
                     muc = str(row.get('Mức đạt được', row.get('Mức', 'T'))).strip().upper()
                     
-                    # Chuẩn hóa mức thông minh để tránh lỗi gõ lệch ký tự
                     muc_key = "T"
                     if "H" in muc: muc_key = "H"
                     elif "C" in muc: muc_key = "C"
@@ -287,24 +303,33 @@ else:
                     danh_sach_phu_hop = kho_mau.get(muc_key, kho_mau["T"])
                     if not danh_sach_phu_hop: danh_sach_phu_hop = ["Em hoàn thành tốt nội dung môn học."]
                     
-                    cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
                     final_cmt = ""
                     
-                    # LỚP PHÒNG THỦ 1: Gọi AI paraphrase viết lại câu
-                    for _ in range(5): 
+                    # VÒNG LẶP THỬ NGHIỆM 8 LẦN (Mỗi lần chọn ngẫu nhiên một câu gốc KHÁC NHAU để tăng tính đa dạng)
+                    for _ in range(8):
+                        cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
+                        
+                        # Thử nghiệm qua AI Paraphrase
                         raw = goi_ai_paraphrase(cau_goc_ngau_nhien, tat_ca_cau_da_tao)
                         raw = lam_sach_nhan_xet(raw, ten)
-                        if raw and not any(tinh_do_trung_lap(raw, h) > 0.65 for h in tat_ca_cau_da_tao):
+                        
+                        # Bộ lọc trùng lặp hạ xuống 0.6 để quét chặt chẽ hơn
+                        if raw and not any(tinh_do_trung_lap(raw, h) > 0.60 for h in tat_ca_cau_da_tao[-15:]):
                             final_cmt = raw
                             break
                             
-                    # LỚP PHÒNG THỦ 2: Nếu AI quá hạn/lỗi, tự dùng code đổi từ đồng nghĩa để câu vẫn mới
+                    # LỚP PHÒNG THỦ 2: Nếu AI không cho ra câu mới, bốc câu ngẫu nhiên qua bộ xáo từ mã cứng
                     if not final_cmt: 
-                        final_cmt = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(cau_goc_ngau_nhien), ten)
+                        for _ in range(5):
+                            cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
+                            test_code = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(cau_goc_ngau_nhien), ten)
+                            if test_code and not any(tinh_do_trung_lap(test_code, h) > 0.60 for h in tat_ca_cau_da_tao[-15:]):
+                                final_cmt = test_code
+                                break
                         
-                    # LỚP PHÒNG THỦ 3: Chốt chặn cuối, lấy câu gốc, cam kết TUYỆT ĐỐI không để ô trống
+                    # LỚP PHÒNG THỦ 3: Chốt chặn cuối cùng nếu kho dữ liệu mẫu quá ít câu độc bản
                     if not final_cmt:
-                        final_cmt = cau_goc_ngau_nhien
+                        final_cmt = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(random.choice(danh_sach_phu_hop)), ten)
                     
                     tat_ca_cau_da_tao.append(final_cmt)
                     df.at[idx, 'Nội dung nhận xét'] = final_cmt
@@ -330,5 +355,5 @@ else:
                                 cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='left')
 
                 output.seek(0)
-                st.success(f"🎉 Đã xong môn {mon_duoc_chon}! File đã tự động xuống hàng gọn gàng.")
+                st.success(f"🎉 Đã xong môn {mon_duoc_chon}! Các câu nhận xét đã được làm mới đa dạng.")
                 st.download_button(f"📥 TẢI FILE KẾT QUẢ {mon_duoc_chon.upper()}", output, f"Nhan_Xet_{mon_duoc_chon.replace(' ', '_')}.xlsx")
