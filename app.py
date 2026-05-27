@@ -197,28 +197,25 @@ else:
     def goi_ai_paraphrase(cau_goc, lich_su_gan_nhat):
         try:
             system_instr = (
-                "Bạn là giáo viên chủ nhiệm bậc tiểu học tại Việt Nam.\n"
-                "Nhiệm vụ: Hãy diễn đạt lại câu nhận xét được cung cấp bằng các từ đồng nghĩa khác hoàn toàn hoặc đảo lộn vị trí các vế câu một cách khéo léo, tự nhiên.\n"
-                "YÊU CẦU BẮT BUỘC:\n"
-                "- CHỈ ghi duy nhất 1 câu nhận xét kết quả bắt đầu bằng chữ 'Em'.\n"
-                "- TUYỆT ĐỐI KHÔNG thêm kính thưa, không diễn giải, không ghi 'Đây là câu viết lại:' hay bất kỳ ký tự dư thừa nào."
+                "Bạn là giáo viên tiểu học Việt Nam.\n"
+                "Nhiệm vụ: Viết lại câu nhận xét được cho bằng từ đồng nghĩa hoặc đảo vế khéo léo.\n"
+                "YÊU CẦU:\n"
+                "- CHỈ trả về duy nhất 1 câu bắt đầu bằng chữ 'Em'.\n"
+                "- TUYỆT ĐỐI KHÔNG thêm lời dẫn giải, không giải thích, không viết thêm ký tự khác."
             )
-            # Ép mô hình tránh xa các câu vừa tạo trong danh sách gần nhất
-            cam_trung = " ; ".join(lich_su_gan_nhat[-7:]) if lich_su_gan_nhat else "Không có"
-            prompt = f"Hãy viết lại câu gốc sau đây sao cho ý nghĩa không đổi nhưng từ ngữ cấu trúc khác đi hoàn toàn:\nCâu gốc: '{cau_goc}'\nTránh viết giống các câu này: {cam_trung}"
+            cam_trung = " ; ".join(lich_su_gan_nhat[-5:]) if lich_su_gan_nhat else "Không có"
+            prompt = f"Hãy viết lại câu này một cách khác biệt:\n'{cau_goc}'\nTránh trùng lặp với các câu này: {cam_trung}"
             
-            # Tăng hẳn temperature lên 0.85 và top_p lên 0.9 để phá bỏ sự rập khuôn của mô hình nhỏ
             resp = requests.post("http://localhost:11434/api/chat", json={
                 "model": "qwen2.5:1.5b",
                 "messages": [{"role": "system", "content": system_instr}, {"role": "user", "content": prompt}],
                 "stream": False, "options": {"temperature": 0.85, "top_p": 0.9, "presence_penalty": 1.2}
-            }, timeout=7)
+            }, timeout=5)
             return resp.json().get("message", {}).get("content", "").strip()
         except: 
             return ""
 
     def code_tu_doi_tu_dong_nghia(cau):
-        # Mở rộng ngân hàng từ để xáo trộn thủ công mạnh mẽ hơn khi AI bị nghẽn
         tu_dien = [
             ("trôi chảy", ["lưu loát", "rành mạch", "rất suôn sẻ", "tốt và trôi chảy"]),
             ("mạch lạc", ["gãy gọn", "rõ ràng cụ thể", "chặt chẽ", "khoa học"]),
@@ -234,12 +231,10 @@ else:
             if goc in cau.lower() and random.random() > 0.2:
                 cau = re.sub(rf"(?i){goc}", random.choice(thay), cau, count=1)
         
-        # Đảo vế câu ngẫu nhiên nếu có dấu phẩy để tạo cấu trúc mới
         if "," in cau and random.random() > 0.5:
             parts = cau.split(",", 1)
             p1 = parts[0].strip().replace("Em ", "")
             p2 = parts[1].strip()
-            # Viết hoa lại chữ cái đầu của vế sau đưa lên trước
             if p2:
                 p2 = p2[0].upper() + p2[1:]
                 cau = f"Em {p2}, {p1.lower()}"
@@ -277,7 +272,12 @@ else:
             elif not os.path.exists(info["file"]) and not uploaded_bank_override:
                 st.error(f"Thiếu file ngân hàng câu mẫu: {info['file']}")
             else:
-                df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=info["sheet"], dtype=str)
+                # ĐỌC VÀ LÀM SẠCH DỮ LIỆU ĐẦU VÀO ĐỂ TRÁNH TRỐNG LỎM CHỎM
+                raw_df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=info["sheet"], dtype=str)
+                # Loại bỏ các dòng trống hoàn toàn trong file gốc nếu có
+                df = raw_df.dropna(subset=['Họ và tên']).copy() if 'Họ và tên' in raw_df.columns else raw_df.dropna(how='all').copy()
+                df = df.reset_index(drop=True)
+                
                 df_bank = pd.read_excel(uploaded_bank_override if uploaded_bank_override else info["file"], dtype=str)
                 
                 kho_mau = {"T": [], "H": [], "C": []}
@@ -288,6 +288,9 @@ else:
                         if "T" in m: kho_mau["T"].append(c)
                         elif "H" in m: kho_mau["H"].append(c)
                         else: kho_mau["C"].append(c)
+                
+                # Tạo sẵn cột nếu chưa có và làm sạch giá trị cũ
+                df['Nội dung nhận xét'] = ""
                 
                 progress_bar = st.progress(0)
                 tat_ca_cau_da_tao = []
@@ -305,37 +308,40 @@ else:
                     
                     final_cmt = ""
                     
-                    # VÒNG LẶP THỬ NGHIỆM 8 LẦN (Mỗi lần chọn ngẫu nhiên một câu gốc KHÁC NHAU để tăng tính đa dạng)
-                    for _ in range(8):
+                    # LỚP PHÒNG THỦ 1: AI Paraphrase
+                    for _ in range(6):
                         cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
-                        
-                        # Thử nghiệm qua AI Paraphrase
                         raw = goi_ai_paraphrase(cau_goc_ngau_nhien, tat_ca_cau_da_tao)
                         raw = lam_sach_nhan_xet(raw, ten)
                         
-                        # Bộ lọc trùng lặp hạ xuống 0.6 để quét chặt chẽ hơn
-                        if raw and not any(tinh_do_trung_lap(raw, h) > 0.60 for h in tat_ca_cau_da_tao[-15:]):
+                        if raw and not any(tinh_do_trung_lap(raw, h) > 0.65 for h in tat_ca_cau_da_tao[-10:]):
                             final_cmt = raw
                             break
                             
-                    # LỚP PHÒNG THỦ 2: Nếu AI không cho ra câu mới, bốc câu ngẫu nhiên qua bộ xáo từ mã cứng
+                    # LỚP PHÒNG THỦ 2: Code trộn từ đồng nghĩa tự động
                     if not final_cmt: 
-                        for _ in range(5):
+                        for _ in range(4):
                             cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
                             test_code = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(cau_goc_ngau_nhien), ten)
-                            if test_code and not any(tinh_do_trung_lap(test_code, h) > 0.60 for h in tat_ca_cau_da_tao[-15:]):
+                            if test_code and not any(tinh_do_trung_lap(test_code, h) > 0.65 for h in tat_ca_cau_da_tao[-10:]):
                                 final_cmt = test_code
                                 break
                         
-                    # LỚP PHÒNG THỦ 3: Chốt chặn cuối cùng nếu kho dữ liệu mẫu quá ít câu độc bản
+                    # LỚP PHÒNG THỦ 3: CHỐT CHẶN CUỐI CÙNG - CAM KẾT TUYỆT ĐỐI KHÔNG ĐỂ TRỐNG Ô
                     if not final_cmt:
                         final_cmt = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(random.choice(danh_sach_phu_hop)), ten)
+                    if not final_cmt or len(final_cmt.split()) < 3:
+                        final_cmt = lam_sach_nhan_xet(random.choice(danh_sach_phu_hop), ten)
                     
                     tat_ca_cau_da_tao.append(final_cmt)
-                    df.at[idx, 'Nội dung nhận xét'] = final_cmt
+                    # Ghi trực tiếp vào ô dữ liệu hiện tại
+                    df.loc[idx, 'Nội dung nhận xét'] = final_cmt
                     
                     percent = int((idx + 1) / len(df) * 100)
                     progress_bar.progress((idx + 1) / len(df), text=f"⏳ Môn {mon_duoc_chon}: {percent}% | {ten}")
+
+                # Điền chuỗi rỗng xử lý triệt để dữ liệu lỗi trước khi xuất
+                df = df.fillna("")
 
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -349,11 +355,11 @@ else:
                             break
                     if col_idx:
                         col_letter = worksheet.cell(row=1, column=col_idx).column_letter
-                        worksheet.column_dimensions[col_letter].width = 50
+                        worksheet.column_dimensions[col_letter].width = 55
                         for row_cells in worksheet.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
                             for cell in row_cells:
                                 cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='left')
 
                 output.seek(0)
-                st.success(f"🎉 Đã xong môn {mon_duoc_chon}! Các câu nhận xét đã được làm mới đa dạng.")
+                st.success(f"🎉 Đã xong môn {mon_duoc_chon}! File đã được lấp đầy dữ liệu chuẩn chỉnh.")
                 st.download_button(f"📥 TẢI FILE KẾT QUẢ {mon_duoc_chon.upper()}", output, f"Nhan_Xet_{mon_duoc_chon.replace(' ', '_')}.xlsx")
