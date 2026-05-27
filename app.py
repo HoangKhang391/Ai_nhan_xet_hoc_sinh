@@ -92,12 +92,11 @@ def ghi_log_he_thong(user, hanh_dong):
         except:
             pass
 
-# --- HÀM TẢI LOGS VỀ CHO ADMIN XEM (ĐÃ SỬA LỖI CÚ PHÁP) ---
+# --- HÀM TẢI LOGS VỀ CHO ADMIN XEM ---
 def tai_log_he_thong_online():
     if not supabase:
         return ["❌ Chưa kết nối được database để lấy Nhật ký hoạt động."]
     try:
-        # Đã sửa lỗi: Dùng desc=True thay thế cho ascending=False để hợp quy chuẩn thư viện mới
         res = supabase.table("logs").select("*").order("created_at", desc=True).limit(40).execute()
         danh_sach_log = []
         for item in res.data:
@@ -270,11 +269,10 @@ else:
         st.divider()
         uploaded_bank_override = st.file_uploader("Cập nhật file mẫu riêng:", type=["xlsx"])
 
-    # --- KHU VỰC THỂ HIỆN LỊCH SỬ HOẠT ĐỘNG (ĐỒNG BỘ ONLINE THỜI GIAN THỰC) ---
+    # --- KHU VỰC THỂ HIỆN LỊCH SỬ HOẠT ĐỘNG ---
     if st.session_state["is_admin"]:
         st.markdown("### 🖥️ Lịch sử hoạt động của hệ thống (Đồng bộ thời gian thực từ Database)")
         
-        # Cấu hình tự động quét và tải log mới từ database lên màn hình admin sau mỗi 5 giây
         st_autorefresh(interval=5000, limit=2000, key="admin_log_refresh")
         
         logs_he_thong_hien_tai = tai_log_he_thong_online()
@@ -364,7 +362,6 @@ else:
             if cols[i].button(ten_mon): mon_duoc_chon = ten_mon
 
         if mon_duoc_chon:
-            # GHI LOG CHẠY FILE LÊN CLOUD
             ghi_log_he_thong(st.session_state['user_email'], f"Kích hoạt chạy nhận xét môn: {mon_duoc_chon}")
             info = DANH_SACH_MON[mon_duoc_chon]
             if info["sheet"] not in xl.sheet_names:
@@ -455,26 +452,4 @@ else:
                     percent = int((idx + 1) / len(df) * 100)
                     progress_bar.progress((idx + 1) / len(df), text=f"⏳ Môn {mon_duoc_chon}: {percent}% | {ten}")
 
-                # GHI LOG HOÀN THÀNH LÊN CLOUD
-                ghi_log_he_thong(st.session_state['user_email'], f"🎉 Đã tạo xong nhận xét môn {mon_duoc_chon} với tổng số {len(df)} học sinh.")
-
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df.to_excel(writer, sheet_name=info["sheet"], index=False)
-                    worksheet = writer.sheets[info["sheet"]]
-                    
-                    col_idx = None
-                    for cell in worksheet[1]:
-                        if cell.value == 'Nội dung nhận xét':
-                            col_idx = cell.column
-                            break
-                    if col_idx:
-                        col_letter = worksheet.cell(row=1, column=col_idx).column_letter
-                        worksheet.column_dimensions[col_letter].width = 55
-                        for row_cells in worksheet.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
-                            for cell in row_cells:
-                                cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='left')
-
-                output.seek(0)
-                st.success(f"🎉 Đã xong môn {mon_duoc_chon}! Cột nhận xét đã được điền đều.")
-                st.download_button(f"📥 TẢI FILE KẾT QUẢ {mon_duoc_chon.upper()}", output, f"Nhan_Xet_{mon_duoc_chon.
+                ghi
