@@ -59,6 +59,9 @@ st.markdown("""
     }
     .stFileUploader { background-color: #F9FAFB; padding: 20px; border-radius: 20px; border: 2px dashed #D1D5DB; }
     .login-box { max-width: 450px; margin: 60px auto; padding: 40px; background: white; border-radius: 20px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); border: 1px solid #F3F4F6; }
+    
+    /* Custom css nhỏ riêng cho nút kích tài khoản trong Sidebar để giao diện cân đối hơn */
+    .kick-btn button { height: 35px !important; font-size: 14px !important; padding: 0px !important; border-radius: 8px !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -159,23 +162,52 @@ else:
                 st.warning("Chưa cấu hình khóa kết nối mạng trực tuyến.")
             else:
                 try:
-                    res_pending = supabase.table("users").select("*").eq("status", "pending").execute()
-                    users_list = res_pending.data
-                    if len(users_list) == 0:
-                        st.write("🎉 Không có ai đang chờ duyệt!")
+                    # Lấy toàn bộ danh sách users để phân loại trực tiếp trên code nhằm tối ưu truy vấn
+                    res_all = supabase.table("users").select("*").execute()
+                    all_users = res_all.data
+                    
+                    users_pending = [u for u in all_users if u.get("status") == "pending"]
+                    users_approved = [u for u in all_users if u.get("status") == "approved"]
+                    
+                    # ---- PHẦN 1: TÀI KHOẢN CHỜ DUYỆT ----
+                    st.markdown("#### ⏳ Danh sách chờ duyệt")
+                    if len(users_pending) == 0:
+                        st.caption("🎉 Không có ai đang chờ duyệt!")
                     else:
-                        st.write(f"⏳ Có {len(users_list)} tài khoản đang chờ được xác nhận:")
-                        for user in users_list:
+                        for user in users_pending:
                             with st.expander(f"✉️ {user['email']}"):
                                 col_d1, col_d2 = st.columns(2)
                                 if col_d1.button("Duyệt ✅", key=f"ok_{user['id']}"):
                                     supabase.table("users").update({"status": "approved"}).eq("id", user['id']).execute()
+                                    st.toast(f"Đã duyệt tài khoản {user['email']}")
                                     st.rerun()
                                 if col_d2.button("Xóa ❌", key=f"del_{user['id']}"):
                                     supabase.table("users").delete().eq("id", user['id']).execute()
+                                    st.toast(f"Đã xóa yêu cầu của {user['email']}")
                                     st.rerun()
-                except:
-                    st.error("Lỗi tải danh sách chờ duyệt trực tuyến.")
+                                    
+                    # ---- PHẦN 2: TÀI KHOẢN ĐÃ DUYỆT (TÍNH NĂNG MỚI BỔ SUNG) ----
+                    st.write("")
+                    st.markdown("#### 📋 Danh sách đã duyệt (Có thể kích)")
+                    if len(users_approved) == 0:
+                        st.caption("Chưa có tài khoản nào được duyệt hệ thống.")
+                    else:
+                        for user in users_approved:
+                            # Chia giao diện dòng: Email bên trái (cột rộng), nút bên phải (cột hẹp)
+                            col_mail, col_kick = st.columns([3, 1.5])
+                            with col_mail:
+                                st.text(user['email'])
+                            with col_kick:
+                                # Bọc class css nhỏ gọn để nút "Kích" không chiếm diện tích quá lớn
+                                st.markdown('<div class="kick-btn">', unsafe_allow_html=True)
+                                if st.button("Kích 🚪", key=f"kick_{user['id']}", type="secondary"):
+                                    # Thực hiện xóa tài khoản này khỏi DB Supabase
+                                    supabase.table("users").delete().eq("id", user['id']).execute()
+                                    st.toast(f"💥 Đã kích thành công: {user['email']}", icon="ℹ️")
+                                    st.rerun()
+                                st.markdown('</div>', unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Lỗi tải danh sách quản lý: {str(e)}")
 
         st.divider()
         st.markdown("### ⚙️ Trạng thái câu mẫu")
