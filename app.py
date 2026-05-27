@@ -8,7 +8,7 @@ import random
 from datetime import datetime
 from openpyxl.styles import Alignment
 from supabase import create_client, Client # Thư viện kết nối database đám mây
-from streamlit_autorefresh import st_autorefresh # THÊM THƯ VIỆN TỰ ĐỘNG CẬP NHẬT LOG
+from streamlit_autorefresh import st_autorefresh # Tự động làm mới bảng log cho Admin
 
 # 1. Cấu hình giao diện Dashboard
 st.set_page_config(page_title="AI Nhận Xét Học Sinh", page_icon="🎓", layout="wide")
@@ -69,12 +69,10 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- ⚙️ ĐỒNG BỘ TRẠNG THÁI ĐĂNG NHẬP QUA URL (CHỐNG MẤT KHI F5) ---
-# Đọc tham số từ thanh địa chỉ trình duyệt (Nếu có sẵn do phiên trước chưa logout)
+# --- ⚙️ ĐỒNG BỘ TRẠNG THÁI ĐĂNG NHẬP QUA URL ---
 url_email = st.query_params.get("u", "")
 url_admin = st.query_params.get("a", "0")
 
-# Khởi tạo session_state dựa trên dữ liệu lấy từ thanh URL địa chỉ
 if "logged_in" not in st.session_state:
     if url_email:
         st.session_state["logged_in"] = True
@@ -85,16 +83,34 @@ if "logged_in" not in st.session_state:
         st.session_state["user_email"] = ""
         st.session_state["is_admin"] = False
 
-if "system_logs" not in st.session_state: 
-    st.session_state["system_logs"] = []
-
-# --- HÀM GHI LỊCH SỬ THAO TÁC (LOGS) ---
+# --- HÀM GHI LỊCH SỬ THAO TÁC LÊN ĐÁM MÂY SUPABASE ---
 def ghi_log_he_thong(user, hanh_dong):
-    thoi_gian = datetime.now().strftime("%H:%M:%S")
-    log_msg = f"[{thoi_gian}] 👤 {user} -> {hanh_dong}"
-    st.session_state["system_logs"].insert(0, log_msg)
-    if len(st.session_state["system_logs"]) > 50:
-        st.session_state["system_logs"].pop()
+    if supabase:
+        try:
+            # Đẩy trực tiếp log lên database online để tất cả các máy đều đồng bộ dữ liệu chung
+            supabase.table("logs").insert({"user_email": user, "action": hanh_dong}).execute()
+        except:
+            pass
+
+# --- HÀM TẢI LOGS VỀ CHO ADMIN XEM ---
+def tai_log_he_thong_online():
+    if not supabase:
+        return ["❌ Chưa kết nối được database để lấy Nhật ký hoạt động."]
+    try:
+        # Lấy 40 log mới nhất xếp từ trên xuống dưới
+        res = supabase.table("logs").select("*").order("created_at", ascending=False).limit(40).execute()
+        danh_sach_log = []
+        for item in res.data:
+            # Định dạng thời gian hiển thị từ cơ sở dữ liệu dựa theo múi giờ
+            try:
+                tg_goc = item["created_at"].split(".")[0].replace("T", " ")
+                tg_format = datetime.strptime(tg_goc, "%Y-%m-%d %H:%M:%S").strftime("%H:%M:%S")
+            except:
+                tg_format = datetime.now().strftime("%H:%M:%S")
+            danh_sach_log.append(f"[{tg_format}] 👤 {item['user_email']} -> {item['action']}")
+        return danh_sach_log if danh_sach_log else ["Chưa có thao tác nào được thực hiện..."]
+    except Exception as e:
+        return [f"❌ Lỗi tải lịch sử hoạt động: {str(e)}"]
 
 # --- HÀM XỬ LÝ DATABASE ONLINE ---
 def kiem_tra_dang_nhap_online(email, password):
@@ -135,13 +151,12 @@ if not st.session_state["logged_in"]:
         if st.button("XÁC NHẬN ĐĂNG NHẬP", key="btn_login", use_container_width=True):
             hop_le, la_admin = kiem_tra_dang_nhap_online(u_email, u_pass)
             if hop_le:
-                # Ghi nhận trạng thái vào Session
                 st.session_state["logged_in"] = True
                 st.session_state["user_email"] = u_email
                 st.session_state["is_admin"] = la_admin
+                
                 ghi_log_he_thong(u_email, "Đăng nhập vào hệ thống thành công.")
                 
-                # NÉO THẲNG VÀO URL TRÌNH DUYỆT ĐỂ CHỐNG MẤT KHI F5
                 st.query_params["u"] = u_email
                 st.query_params["a"] = "1" if la_admin else "0"
                 
@@ -187,13 +202,9 @@ else:
         st.markdown(f"👤 Tài khoản: **{st.session_state['user_email']}**")
         if st.button("🚪 Đăng xuất", key="btn_logout"):
             ghi_log_he_thong(st.session_state['user_email'], "Đã đăng xuất khỏi hệ thống.")
-            
-            # Xoá trạng thái trong session_state
             st.session_state["logged_in"] = False
             st.session_state["is_admin"] = False
             st.session_state.clear()
-            
-            # XOÁ SẠCH THAM SỐ TRÊN THANH URL ĐỊA CHỈ ĐỂ LOGOUT HOÀN TOÀN
             st.query_params.clear()
             st.rerun()
             
@@ -234,7 +245,7 @@ else:
                         st.caption("Chưa có tài khoản nào được duyệt hệ thống.")
                     else:
                         for user in users_approved:
-                            col_mail, col_kick = st.columns([2.8, 1.7])
+                            col_mail, col_kick = st.columns([2.2, 1.3])
                             with col_mail:
                                 st.text(user['email'])
                             with col_kick:
@@ -260,16 +271,16 @@ else:
         st.divider()
         uploaded_bank_override = st.file_uploader("Cập nhật file mẫu riêng:", type=["xlsx"])
 
-    # --- KHU VỰC THỂ HIỆN LỊCH SỬ THAO TÁC (CHỈ HIỂN THỊ CHO ADMIN VÀ CẬP NHẬT LIÊN TỤC) ---
+    # --- KHU VỰC THỂ HIỆN LỊCH SỬ HOẠT ĐỘNG (ĐỒNG BỘ ONLINE THỜI GIAN THỰC) ---
     if st.session_state["is_admin"]:
-        st.markdown("### 🖥️ Lịch sử hoạt động của hệ thống (Đồng bộ thời gian thực từ Admin)")
-        st_autorefresh(interval=5000, limit=1200, key="admin_log_refresh")
+        st.markdown("### 🖥️ Lịch sử hoạt động của hệ thống (Đồng bộ thời gian thực từ Database)")
         
-        if len(st.session_state["system_logs"]) == 0:
-            st.markdown('<div class="log-container">Chưa có thao tác nào được thực hiện...</div>', unsafe_allow_html=True)
-        else:
-            logs_html = "<br>".join(st.session_state["system_logs"])
-            st.markdown(f'<div class="log-container">{logs_html}</div>', unsafe_allow_html=True)
+        # Cấu hình tự động quét và tải log mới từ database lên màn hình admin sau mỗi 5 giây
+        st_autorefresh(interval=5000, limit=2000, key="admin_log_refresh")
+        
+        logs_he_thong_hien_tai = tai_log_he_thong_online()
+        logs_html = "<br>".join(logs_he_thong_hien_tai)
+        st.markdown(f'<div class="log-container">{logs_html}</div>', unsafe_allow_html=True)
         st.write("")
 
     # --- KHU VỰC CHỨC NĂNG CHÍNH CỦA USER THƯỜNG VÀ ADMIN ---
@@ -354,6 +365,7 @@ else:
             if cols[i].button(ten_mon): mon_duoc_chon = ten_mon
 
         if mon_duoc_chon:
+            # GHI LOG CHẠY FILE LÊN CLOUD
             ghi_log_he_thong(st.session_state['user_email'], f"Kích hoạt chạy nhận xét môn: {mon_duoc_chon}")
             info = DANH_SACH_MON[mon_duoc_chon]
             if info["sheet"] not in xl.sheet_names:
@@ -444,7 +456,8 @@ else:
                     percent = int((idx + 1) / len(df) * 100)
                     progress_bar.progress((idx + 1) / len(df), text=f"⏳ Môn {mon_duoc_chon}: {percent}% | {ten}")
 
-                ghi_log_he_thong(st.session_state['user_email'], f"🎉 Hoàn thành xử lý dữ liệu và tạo file cho môn {mon_duoc_chon}!")
+                # GHI LOG HOÀN THÀNH LÊN CLOUD
+                ghi_log_he_thong(st.session_state['user_email'], f"🎉 Đã tạo xong nhận xét môn {mon_duoc_chon} với tổng số {len(df)} học sinh.")
 
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -464,5 +477,5 @@ else:
                                 cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='left')
 
                 output.seek(0)
-                st.success(f"🎉 Đã xong môn {mon_duoc_chon}! Cột nhận xét đã được điền đều, thẳng hàng tăm tắp.")
+                st.success(f"🎉 Đã xong môn {mon_duoc_chon}! Cột nhận xét đã được điền đều.")
                 st.download_button(f"📥 TẢI FILE KẾT QUẢ {mon_duoc_chon.upper()}", output, f"Nhan_Xet_{mon_duoc_chon.replace(' ', '_')}.xlsx")
