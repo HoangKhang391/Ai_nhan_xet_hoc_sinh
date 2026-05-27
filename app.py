@@ -75,6 +75,41 @@ if "user_email" not in st.session_state: st.session_state["user_email"] = ""
 if "is_admin" not in st.session_state: st.session_state["is_admin"] = False
 if "system_logs" not in st.session_state: st.session_state["system_logs"] = []
 
+# --- 🛠️ CƠ CHẾ ĐỒNG BỘ TRẠNG THÁI ĐĂNG NHẬP VỚI TRÌNH DUYỆT (CHỐNG MẤT KHI F5) ---
+# Đọc dữ liệu từ localStorage gửi ngược vào st.query_params của Streamlit
+st.components.v1.html("""
+    <script>
+    const email = localStorage.getItem("user_email");
+    const loggedIn = localStorage.getItem("logged_in");
+    const isAdmin = localStorage.getItem("is_admin");
+    
+    const url = new URL(window.location.href);
+    let changed = false;
+    
+    if (loggedIn === "true" && url.searchParams.get("sync_login") !== "true") {
+        url.searchParams.set("sync_login", "true");
+        url.searchParams.set("email", email || "");
+        url.searchParams.set("admin", isAdmin || "false");
+        changed = true;
+    } else if (!loggedIn && url.searchParams.get("sync_login") === "true") {
+        url.searchParams.delete("sync_login");
+        url.searchParams.delete("email");
+        url.searchParams.delete("admin");
+        changed = true;
+    }
+    
+    if (changed) {
+        window.location.href = url.href;
+    }
+    </script>
+""", height=0, width=0)
+
+# Khôi phục trạng thái từ URL query params sau khi ép đồng bộ
+if st.query_params.get("sync_login") == "true" and not st.session_state["logged_in"]:
+    st.session_state["logged_in"] = True
+    st.session_state["user_email"] = st.query_params.get("email", "")
+    st.session_state["is_admin"] = st.query_params.get("admin") == "true"
+
 # --- HÀM GHI LỊCH SỬ THAO TÁC (LOGS) ---
 def ghi_log_he_thong(user, hanh_dong):
     thoi_gian = datetime.now().strftime("%H:%M:%S")
@@ -113,7 +148,7 @@ def gui_yeu_cau_duyet_online(email, password):
 # --- GIAO DIỆN MÀN HÌNH ĐĂNG NHẬP / ĐĂNG KÝ ---
 if not st.session_state["logged_in"]:
     st.markdown('<div class="login-box">', unsafe_allow_html=True)
-    st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>🔐AI NHẬN XÉT HOC SINH</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>🔐AI NHẬN XÉT HỌC SINH</h2>", unsafe_allow_html=True)
     
     tab1, tab2 = st.tabs(["🔑 Đăng nhập", "📝 Đăng ký cấp quyền"])
     
@@ -127,6 +162,16 @@ if not st.session_state["logged_in"]:
                 st.session_state["user_email"] = u_email
                 st.session_state["is_admin"] = la_admin
                 ghi_log_he_thong(u_email, "Đăng nhập vào hệ thống thành công.")
+                
+                # Lưu thông tin vào localStorage của trình duyệt bằng JS
+                st.components.v1.html(f"""
+                    <script>
+                    localStorage.setItem("logged_in", "true");
+                    localStorage.setItem("user_email", "{u_email}");
+                    localStorage.setItem("is_admin", "{str(la_admin).lower()}");
+                    window.parent.location.reload();
+                    </script>
+                """, height=0, width=0)
                 st.success("Đăng nhập thành công!")
                 st.rerun()
             else:
@@ -169,9 +214,22 @@ else:
         st.markdown(f"👤 Tài khoản: **{st.session_state['user_email']}**")
         if st.button("🚪 Đăng xuất", key="btn_logout"):
             ghi_log_he_thong(st.session_state['user_email'], "Đã đăng xuất khỏi hệ thống.")
+            
+            # Xoá trạng thái trong session_state hiện tại và xoá cả query params trên URL
             st.session_state["logged_in"] = False
-            st.session_state["is_admin"] = False  # Reset trạng thái admin khi logout
-            st.session_state.clear()             # Xoá sạch bộ nhớ phiên cũ
+            st.session_state["is_admin"] = False
+            st.session_state.clear()
+            st.query_params.clear()
+            
+            # Xóa hẳn thông tin lưu trên trình duyệt bằng đoạn mã script này
+            st.components.v1.html("""
+                <script>
+                localStorage.removeItem("logged_in");
+                localStorage.removeItem("user_email");
+                localStorage.removeItem("is_admin");
+                window.parent.location.href = window.parent.location.origin + window.parent.location.pathname;
+                </script>
+            """, height=0, width=0)
             st.rerun()
             
         if st.session_state["is_admin"]:
@@ -237,7 +295,7 @@ else:
         st.divider()
         uploaded_bank_override = st.file_uploader("Cập nhật file mẫu riêng:", type=["xlsx"])
 
-    # --- ĐÃ SỬA: KHU VỰC THỂ HIỆN LỊCH SỬ THAO TÁC (CHỈ HIỂN THỊ CHO ADMIN VÀ CẬP NHẬT LIÊN TỤC) ---
+    # --- KHU VỰC THỂ HIỆN LỊCH SỬ THAO TÁC (CHỈ HIỂN THỊ CHO ADMIN VÀ CẬP NHẬT LIÊN TỤC) ---
     if st.session_state["is_admin"]:
         st.markdown("### 🖥️ Lịch sử hoạt động của hệ thống (Đồng bộ thời gian thực từ Admin)")
         
