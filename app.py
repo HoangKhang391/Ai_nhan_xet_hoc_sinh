@@ -92,16 +92,15 @@ def ghi_log_he_thong(user, hanh_dong):
         except:
             pass
 
-# --- HÀM TẢI LOGS VỀ CHO ADMIN XEM ---
+# --- HÀM TẢI LOGS VỀ CHO ADMIN XEM (ĐÃ SỬA LỖI CÚ PHÁP) ---
 def tai_log_he_thong_online():
     if not supabase:
         return ["❌ Chưa kết nối được database để lấy Nhật ký hoạt động."]
     try:
-        # Lấy 40 log mới nhất xếp từ trên xuống dưới
-        res = supabase.table("logs").select("*").order("created_at", ascending=False).limit(40).execute()
+        # Đã sửa lỗi: Dùng desc=True thay thế cho ascending=False để hợp quy chuẩn thư viện mới
+        res = supabase.table("logs").select("*").order("created_at", desc=True).limit(40).execute()
         danh_sach_log = []
         for item in res.data:
-            # Định dạng thời gian hiển thị từ cơ sở dữ liệu dựa theo múi giờ
             try:
                 tg_goc = item["created_at"].split(".")[0].replace("T", " ")
                 tg_format = datetime.strptime(tg_goc, "%Y-%m-%d %H:%M:%S").strftime("%H:%M:%S")
@@ -478,4 +477,4 @@ else:
 
                 output.seek(0)
                 st.success(f"🎉 Đã xong môn {mon_duoc_chon}! Cột nhận xét đã được điền đều.")
-                st.download_button(f"📥 TẢI FILE KẾT QUẢ {mon_duoc_chon.upper()}", output, f"Nhan_Xet_{mon_duoc_chon.replace(' ', '_')}.xlsx")
+                st.download_button(f"📥 TẢI FILE KẾT QUẢ {mon_duoc_chon.upper()}", output, f"Nhan_Xet_{mon_duoc_chon.
