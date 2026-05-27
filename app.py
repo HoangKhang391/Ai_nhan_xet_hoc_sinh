@@ -15,7 +15,6 @@ st.set_page_config(page_title="AI Nhận Xét Học Sinh", page_icon="🎓", lay
 SUPABASE_URL = "https://nregdydyzpkpuzsaibrs.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5yZWdkeWR5enBrcHV6c2FpYnJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4NDY4MDEsImV4cCI6MjA5NTQyMjgwMX0.qBptrQFiCFgjLOUyaHEqsPS_hVF1c-PoR-E2Kwb0xUM"
 
-
 loi_ket_noi_db = ""
 
 @st.cache_resource
@@ -26,7 +25,6 @@ def init_supabase():
             loi_ket_noi_db = "URL chưa được cấu hình đúng."
             return None
         client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        
         client.table("users").select("id").limit(1).execute()
         return client
     except Exception as e:
@@ -35,7 +33,7 @@ def init_supabase():
 
 supabase: Client = init_supabase()
 
-
+# --- CSS ĐẸP VÀ CHỐNG DỊCH TRÌNH DUYỆT ---
 st.markdown("""
     <style>
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; translate: no !important; }
@@ -145,7 +143,7 @@ else:
         "🔬 Khoa học": {"file": "databank_khoa_hoc.xlsx", "sheet": "Khoa học"},
         "🗺️ Lịch sử - Địa lý": {"file": "databank_lsdl.xlsx", "sheet": "Lịch sử và Địa lý"},
         "💻 Tin Học - Công Nghệ": {"file": "databank_TH_CN.xlsx", "sheet": "TH-CN (Công nghệ)"},
-        "⛺ Hoạt Động Trải nghiệm": {"file": "databank_hdtn.xlsx", "sheet": "Hoạt động trải nghiệm"}
+        "⛺ Hoạt ĐỘng Trải nghiệm": {"file": "databank_hdtn.xlsx", "sheet": "Hoạt động trải nghiệm"}
     }
 
     with st.sidebar:
@@ -218,7 +216,7 @@ else:
     def code_tu_doi_tu_dong_nghia(cau):
         tu_dien = [
             ("trôi chảy", ["lưu loát", "rành mạch", "suôn sẻ"]),
-            ("mạch lạc", ["gãy gọn", "rõ ràng", "chật chẽ"]),
+            ("mạch lạc", ["gãy gọn", "rõ ràng", "chặt chẽ"]),
             ("sáng tạo", ["độc đáo", "giàu ý tưởng"]),
             ("chính xác", ["đúng yêu cầu", "chuẩn xác"]),
             ("tích cực", ["hăng hái", "chủ động", "tự giác"]),
@@ -231,6 +229,7 @@ else:
         return cau
 
     def lam_sach_nhan_xet(text, ten_hs):
+        if not text or len(text.split()) < 4: return ""
         tu_cam = ["cảm ơn", "bạn đã", "câu hỏi", "tôi là", "trợ lý", "chúc bạn", "diễn đạt", "câu dịch", "dưới đây là"]
         for tk in tu_cam:
             if tk in text.lower(): return ""
@@ -238,7 +237,6 @@ else:
         text = text.replace("**", "").replace("*", "").replace('"', '').replace("'", "")
         if ten_hs: text = re.sub(rf"(?i){ten_hs}", "", text)
         text = text.strip(' ".,-–\n\r\t')
-        if len(text.split()) < 4: return ""
         if not text.lower().startswith("em"): text = "Em " + text
         text = text[0].upper() + text[1:]
         return text + "." if not text.endswith(".") else text
@@ -269,7 +267,7 @@ else:
                 for _, r in df_bank.iterrows():
                     m = str(r.get('Mức đạt được', r.get('Mức', 'T'))).strip().upper()
                     c = str(r.get('Nội dung nhận xét', '')).strip()
-                    if len(c.split()) > 4:
+                    if len(c.split()) > 2:
                         if "T" in m: kho_mau["T"].append(c)
                         elif "H" in m: kho_mau["H"].append(c)
                         else: kho_mau["C"].append(c)
@@ -280,18 +278,33 @@ else:
                 for idx, row in df.iterrows():
                     ten = str(row.get('Họ và tên', '')).strip()
                     muc = str(row.get('Mức đạt được', row.get('Mức', 'T'))).strip().upper()
-                    danh_sach_phu_hop = kho_mau.get(muc, kho_mau["T"] if kho_mau["T"] else ["Em hoàn thành tốt nội dung môn học."])
                     
+                    # Chuẩn hóa mức thông minh để tránh lỗi gõ lệch ký tự
+                    muc_key = "T"
+                    if "H" in muc: muc_key = "H"
+                    elif "C" in muc: muc_key = "C"
+                    
+                    danh_sach_phu_hop = kho_mau.get(muc_key, kho_mau["T"])
+                    if not danh_sach_phu_hop: danh_sach_phu_hop = ["Em hoàn thành tốt nội dung môn học."]
+                    
+                    cau_goc_ngau_nhien = random.choice(danh_sach_phu_hop)
                     final_cmt = ""
+                    
+                    # LỚP PHÒNG THỦ 1: Gọi AI paraphrase viết lại câu
                     for _ in range(5): 
-                        goc = random.choice(danh_sach_phu_hop)
-                        raw = goi_ai_paraphrase(goc, tat_ca_cau_da_tao)
+                        raw = goi_ai_paraphrase(cau_goc_ngau_nhien, tat_ca_cau_da_tao)
                         raw = lam_sach_nhan_xet(raw, ten)
                         if raw and not any(tinh_do_trung_lap(raw, h) > 0.65 for h in tat_ca_cau_da_tao):
                             final_cmt = raw
                             break
+                            
+                    # LỚP PHÒNG THỦ 2: Nếu AI quá hạn/lỗi, tự dùng code đổi từ đồng nghĩa để câu vẫn mới
                     if not final_cmt: 
-                        final_cmt = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(random.choice(danh_sach_phu_hop)), ten)
+                        final_cmt = lam_sach_nhan_xet(code_tu_doi_tu_dong_nghia(cau_goc_ngau_nhien), ten)
+                        
+                    # LỚP PHÒNG THỦ 3: Chốt chặn cuối, lấy câu gốc, cam kết TUYỆT ĐỐI không để ô trống
+                    if not final_cmt:
+                        final_cmt = cau_goc_ngau_nhien
                     
                     tat_ca_cau_da_tao.append(final_cmt)
                     df.at[idx, 'Nội dung nhận xét'] = final_cmt
